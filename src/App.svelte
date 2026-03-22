@@ -1,12 +1,13 @@
 <script>
   import ImageUpload from './lib/ImageUpload.svelte'
+  import Header from './lib/Header.svelte'
+  import Footer from './lib/Footer.svelte'
 </script>
-
+<Header />
+<main>
 <section id="center">
-  <div class="header">
-    <h1>swiftResize</h1>
-    <p>Quick and easy image resizing</p>
-  </div>
-
-  <ImageUpload />
+ <ImageUpload />
 </section>
+</main>
+<Footer />
+ 
