@@ -191,6 +191,29 @@
     })
   }
 
+  async function compressAll() {
+    isCompressing = true
+    const compressed = []
+    const errors = []
+
+    for (const file of files) {
+      try {
+        const result = await compressImage(file)
+        compressed.push(result)
+      } catch (error) {
+        console.error(`Error compressing ${file.name}:`, error)
+        errors.push(`${file.name}: ${error.message}`)
+      }
+    }
+
+    compressedFiles = compressed
+    isCompressing = false
+
+    if (errors.length > 0) {
+      alert(`Compressed ${compressed.length}/${files.length} images.\n\nFailed:\n${errors.join('\n')}`)
+    }
+  }
+
   function downloadImage(file) {
     const link = document.createElement('a')
     link.href = file.preview
@@ -262,37 +285,36 @@
 
   {#if mode}
     <div class="settings-panel">
-      <h3>Compression Settings</h3>
-      <div class="settings-grid">
-        <div class="setting">
-          <label for="width">Width (px)</label>
-          <input type="number" id="width" bind:value={width} min="1" placeholder="Original" />
-        </div>
-        <div class="setting">
-          <label for="height">Height (px)</label>
-          <input type="number" id="height" bind:value={height} min="1" placeholder="Original" />
-        </div>
-        <div class="setting full">
-          <label for="compression">Compression: {compression}%</label>
-          <input type="range" id="compression" bind:value={compression} min="0" max="90" />
-        </div>
-        <div class="setting full">
-          <label class="checkbox-label">
-            <input type="checkbox" bind:checked={maintainAspect} />
-            Maintain Aspect Ratio
-          </label>
-        </div>
-        <div class="setting full">
-          <label for="format">Output Format</label>
-          <select id="format" bind:value={selectedFormat} class="format-select">
-            {#each formatOptions as option}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
-        </div>
+    <h3>Compression Settings</h3>
+    <div class="settings-grid">
+          <div class="setting full">
+        <label for="format">Output Format</label>
+        <select id="format" bind:value={selectedFormat} class="format-select">
+          {#each formatOptions as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
       </div>
-      <p class="info-text">💡 Images compress automatically as you upload them</p>
+      <div class="setting">
+        <label for="width">Width (px)</label>
+        <input type="number" id="width" bind:value={width} min="1" placeholder="Original" />
+      </div>
+      <div class="setting">
+        <label for="height">Height (px)</label>
+        <input type="number" id="height" bind:value={height} min="1" placeholder="Original" />
+      </div>
+      <div class="setting full">
+        <label for="compression">Compression: {compression}%</label>
+        <input type="range" id="compression" bind:value={compression} min="0" max="90" />
+      </div>
+      <div class="setting full">
+        <label class="checkbox-label">
+          <input type="checkbox" bind:checked={maintainAspect} />
+          Maintain Aspect Ratio
+        </label>
+      </div>
     </div>
+  </div>
   {/if}
 
   {#if compressedFiles.length > 0}
@@ -430,6 +452,91 @@
     border-radius: 4px;
   }
 
+  .uploaded-files {
+    margin-top: 32px;
+  }
+
+  .uploaded-files h3 {
+    font-size: 16px;
+    color: var(--text-h);
+    margin: 0 0 16px 0;
+  }
+
+  .file-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 16px;
+  }
+
+  .file-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .preview {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    &:hover .remove-btn {
+      opacity: 1;
+    }
+  }
+
+  .remove-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.8);
+    }
+  }
+
+  .file-details {
+    padding: 0 4px;
+  }
+
+  .file-name {
+    font-size: 12px;
+    color: var(--text-h);
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-size,
+  .file-dims {
+    font-size: 11px;
+    color: var(--text);
+    margin: 2px 0 0 0;
+  }
+
   .mode-toggle-btn {
     width: 100%;
     padding: 12px 20px;
@@ -542,86 +649,28 @@
     }
   }
 
-  .info-text {
-    font-size: 12px;
-    color: var(--text);
-    margin: 12px 0 0 0;
-    font-style: italic;
-  }
-
-  .file-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 16px;
-  }
-
-  .file-item {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .preview {
-    position: relative;
+  .compress-btn {
     width: 100%;
-    aspect-ratio: 1;
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--code-bg);
-    border: 1px solid var(--border);
-
-    img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
-    &:hover .remove-btn {
-      opacity: 1;
-    }
-  }
-
-  .remove-btn {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    background: rgba(0, 0, 0, 0.6);
+    padding: 12px 20px;
+    background: var(--accent);
     color: white;
     border: none;
-    border-radius: 50%;
-    width: 28px;
-    height: 28px;
-    font-size: 20px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
     cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    transition: opacity 0.2s ease;
+    transition: all 0.2s ease;
 
-    &:hover {
-      background: rgba(0, 0, 0, 0.8);
+    &:hover:not(:disabled) {
+      background: var(--accent);
+      opacity: 0.9;
+      box-shadow: var(--shadow);
     }
-  }
 
-  .file-details {
-    padding: 0 4px;
-  }
-
-  .file-name {
-    font-size: 12px;
-    color: var(--text-h);
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .file-size,
-  .file-dims {
-    font-size: 11px;
-    color: var(--text);
-    margin: 2px 0 0 0;
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
   }
 
   .compressed-files {
