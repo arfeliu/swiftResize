@@ -2,8 +2,25 @@
   import { onMount } from 'svelte'
 
   let files = []
+  let compressedFiles = []
   let dragActive = false
   let fileInput
+  let width = null
+  let height = null
+  let compression = 70
+  let maintainAspect = true
+  let isCompressing = false
+  let selectedFormat = 'image/jpeg'
+  let totalFilesProcessing = 0
+  let filesCompleted = 0
+  let mode = false
+
+  const formatOptions = [
+    { value: 'image/jpeg', label: 'JPEG' },
+    { value: 'image/png', label: 'PNG' },
+    { value: 'image/webp', label: 'WebP' },
+    { value: 'image/avif', label: 'AVIF' }
+  ]
 
   onMount(() => {
     // Add drag and drop event listeners
@@ -53,29 +70,179 @@
   }
 
   function addFiles(newFiles) {
+    totalFilesProcessing = newFiles.length
+    filesCompleted = 0
     newFiles.forEach(file => {
       const reader = new FileReader()
       reader.onload = (event) => {
-        files = [
-          ...files,
-          {
+        const img = new Image()
+        img.onload = () => {
+          const fileObj = {
             name: file.name,
             size: file.size,
             preview: event.target.result,
-            file: file
+            file: file,
+            mimeType: file.type,
+            originalWidth: img.width,
+            originalHeight: img.height
           }
-        ]
+          // Automatically compress the file
+          compressImageAndAdd(fileObj)
+        }
+        img.src = event.target.result
       }
       reader.readAsDataURL(file)
     })
+  }
+
+  async function compressImageAndAdd(fileObj) {
+    try {
+      const result = await compressImage(fileObj)
+      compressedFiles = [...compressedFiles, result]
+    } catch (error) {
+      console.error(`Error compressing ${fileObj.name}:`, error)
+    } finally {
+      filesCompleted += 1
+      if (filesCompleted >= totalFilesProcessing) {
+        totalFilesProcessing = 0
+        filesCompleted = 0
+      }
+    }
   }
 
   function removeFile(index) {
     files = files.filter((_, i) => i !== index)
   }
 
+  function removeCompressed(index) {
+    compressedFiles = compressedFiles.filter((_, i) => i !== index)
+  }
+
   function toggleUploadClick() {
     fileInput?.click()
+  }
+
+  async function compressImage(file) {
+    return new Promise((resolve, reject) => {
+      try {
+        const reader = new FileReader()
+        reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`))
+        reader.onload = (event) => {
+          const img = new Image()
+          img.onerror = () => reject(new Error(`Failed to load image: ${file.name}`))
+          img.onload = () => {
+            try {
+              const canvas = document.createElement('canvas')
+              let finalWidth = width || img.width
+              let finalHeight = height || img.height
+
+              if (maintainAspect && (width || height)) {
+                const aspectRatio = img.width / img.height
+                const targetAspect = finalWidth / finalHeight
+                if (aspectRatio > targetAspect) {
+                  finalHeight = Math.round(finalWidth / aspectRatio)
+                } else {
+                  finalWidth = Math.round(finalHeight * aspectRatio)
+                }
+              }
+
+              canvas.width = finalWidth
+              canvas.height = finalHeight
+              const ctx = canvas.getContext('2d')
+              ctx.drawImage(img, 0, 0, finalWidth, finalHeight)
+
+              const mimeType = selectedFormat || 'image/jpeg'
+              const ext = getFormatExtension(mimeType)
+              const nameWithoutExt = file.name.replace(/\.[^.]+$/, '')
+              canvas.toBlob(
+                (blob) => {
+                  if (!blob) {
+                    reject(new Error(`Failed to compress: ${file.name}`))
+                    return
+                  }
+                  const reader = new FileReader()
+                  reader.onerror = () => reject(new Error(`Failed to read compressed blob: ${file.name}`))
+                  reader.onload = (e) => {
+                    resolve({
+                      name: `${nameWithoutExt}_c.${ext}`,
+                      originalSize: file.size,
+                      compressedSize: blob.size,
+                      preview: e.target.result,
+                      blob: blob,
+                      width: finalWidth,
+                      height: finalHeight
+                    })
+                  }
+                  reader.readAsDataURL(blob)
+                },
+                mimeType,
+                (100 - compression) / 100
+              )
+            } catch (err) {
+              reject(err)
+            }
+          }
+          img.src = event.target.result
+        }
+        reader.readAsDataURL(file.file)
+      } catch (err) {
+        reject(err)
+      }
+    })
+  }
+
+  async function compressAll() {
+    isCompressing = true
+    const compressed = []
+    const errors = []
+
+    for (const file of files) {
+      try {
+        const result = await compressImage(file)
+        compressed.push(result)
+      } catch (error) {
+        console.error(`Error compressing ${file.name}:`, error)
+        errors.push(`${file.name}: ${error.message}`)
+      }
+    }
+
+    compressedFiles = compressed
+    isCompressing = false
+
+    if (errors.length > 0) {
+      alert(`Compressed ${compressed.length}/${files.length} images.\n\nFailed:\n${errors.join('\n')}`)
+    }
+  }
+
+  function downloadImage(file) {
+    const link = document.createElement('a')
+    link.href = file.preview
+    link.download = file.name
+    link.click()
+  }
+
+  async function downloadAll() {
+    for (let i = 0; i < compressedFiles.length; i++) {
+      downloadImage(compressedFiles[i])
+      // Add 100ms delay between downloads to avoid browser queue limits
+      if (i < compressedFiles.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    }
+  }
+
+  function getSizeSavings(original, compressed) {
+    return (((original - compressed) / original) * 100).toFixed(1)
+  }
+
+  function getFormatExtension(mimeType) {
+    const extensionMap = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+      'image/avif': 'avif'
+    }
+    return extensionMap[mimeType] || 'jpg'
   }
 </script>
 
@@ -100,25 +267,88 @@
     class="hidden-input"
   />
 
-  {#if files.length > 0}
-    <div class="uploaded-files">
-      <h3>Uploaded Images ({files.length})</h3>
+  {#if totalFilesProcessing > 0}
+    <div class="progress-container">
+      <div class="progress-header">
+        <span class="progress-text">Processing {filesCompleted} of {totalFilesProcessing}</span>
+        <span class="progress-percent">{Math.round((filesCompleted / totalFilesProcessing) * 100)}%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: {(filesCompleted / totalFilesProcessing) * 100}%"></div>
+      </div>
+    </div>
+  {/if}
+
+  <button class="mode-toggle-btn" on:click={() => (mode = !mode)}>
+    {mode ? '⚙️ Hide Settings' : '⚙️ Show Settings'}
+  </button>
+
+  {#if mode}
+    <div class="settings-panel">
+    <h3>Compression Settings</h3>
+    <div class="settings-grid">
+          <div class="setting full">
+        <label for="format">Output Format</label>
+        <select id="format" bind:value={selectedFormat} class="format-select">
+          {#each formatOptions as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="setting">
+        <label for="width">Width (px)</label>
+        <input type="number" id="width" bind:value={width} min="1" placeholder="Original" />
+      </div>
+      <div class="setting">
+        <label for="height">Height (px)</label>
+        <input type="number" id="height" bind:value={height} min="1" placeholder="Original" />
+      </div>
+      <div class="setting full">
+        <label for="compression">Compression: {compression}%</label>
+        <input type="range" id="compression" bind:value={compression} min="0" max="90" />
+      </div>
+      <div class="setting full">
+        <label class="checkbox-label">
+          <input type="checkbox" bind:checked={maintainAspect} />
+          Maintain Aspect Ratio
+        </label>
+      </div>
+    </div>
+  </div>
+  {/if}
+
+  {#if compressedFiles.length > 0}
+    <div class="compressed-files">
+      <h3>Compressed Images ({compressedFiles.length})</h3>
       <div class="file-grid">
-        {#each files as file, index (index)}
+        {#each compressedFiles as file, index (index)}
           <div class="file-item">
             <div class="preview">
               <img src={file.preview} alt={file.name} />
-              <button class="remove-btn" on:click={() => removeFile(index)} title="Remove">
+              <button class="remove-btn" on:click={() => removeCompressed(index)} title="Remove">
                 ×
               </button>
             </div>
             <div class="file-details">
               <p class="file-name">{file.name}</p>
-              <p class="file-size">{(file.size / 1024).toFixed(2)} KB</p>
+              <p class="file-size">{(file.compressedSize / 1024).toFixed(2)} KB</p>
+              <p class="file-dims">{file.width}×{file.height}</p>
+              <p class="savings">
+                Saved: {getSizeSavings(file.originalSize, file.compressedSize)}%
+              </p>
+              <button class="download-btn" on:click={() => downloadImage(file)}>
+                ↓ Download
+              </button>
             </div>
           </div>
         {/each}
       </div>
+      <button class="download-all-btn" on:click={downloadAll}>
+        ↓ Download All ({compressedFiles.length})
+      </button>
+      <button class="clear-all-btn" on:click={() => (compressedFiles = [])}>
+        🗑 Clear All
+      </button>
     </div>
   {/if}
 </section>
@@ -178,6 +408,48 @@
 
   .hidden-input {
     display: none;
+  }
+
+  .progress-container {
+    margin-top: 24px;
+    padding: 16px 24px;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    border-radius: 8px;
+  }
+
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .progress-text {
+    font-size: 13px;
+    color: var(--text-h);
+    font-weight: 500;
+  }
+
+  .progress-percent {
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
+    border-radius: 4px;
   }
 
   .uploaded-files {
@@ -258,9 +530,222 @@
     white-space: nowrap;
   }
 
-  .file-size {
+  .file-size,
+  .file-dims {
     font-size: 11px;
     color: var(--text);
+    margin: 2px 0 0 0;
+  }
+
+  .mode-toggle-btn {
+    width: 100%;
+    padding: 12px 20px;
+    margin-top: 24px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover {
+      background: var(--accent);
+      color: white;
+      box-shadow: var(--shadow);
+    }
+  }
+
+  .settings-panel {
+    margin-top: 32px;
+    padding: 24px;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    border-radius: 8px;
+  }
+
+  .settings-panel h3 {
+    font-size: 16px;
+    color: var(--text-h);
+    margin: 0 0 16px 0;
+  }
+
+  .settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+
+    @media (max-width: 600px) {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .setting {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    &.full {
+      grid-column: 1 / -1;
+    }
+  }
+
+  .setting label {
+    font-size: 13px;
+    color: var(--text-h);
+    font-weight: 500;
+  }
+
+  .setting input[type='number'],
+  .setting input[type='range'] {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text-h);
+    font-size: 14px;
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-bg);
+    }
+  }
+
+  .setting input[type='range'] {
+    padding: 0;
+    height: 6px;
+  }
+
+  .format-select {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text-h);
+    font-size: 14px;
+    cursor: pointer;
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-bg);
+    }
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    cursor: pointer;
+
+    input {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+  }
+
+  .compress-btn {
+    width: 100%;
+    padding: 12px 20px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover:not(:disabled) {
+      background: var(--accent);
+      opacity: 0.9;
+      box-shadow: var(--shadow);
+    }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+
+  .compressed-files {
+    margin-top: 48px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+  }
+
+  .compressed-files h3 {
+    font-size: 16px;
+    color: var(--text-h);
+    margin: 0 0 16px 0;
+  }
+
+  .download-btn {
+    width: 100%;
+    padding: 6px 8px;
+    margin-top: 8px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover {
+      background: var(--accent);
+      color: white;
+    }
+  }
+
+  .download-all-btn {
+    width: 100%;
+    padding: 12px 20px;
+    margin-top: 24px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover {
+      opacity: 0.9;
+      box-shadow: var(--shadow);
+    }
+  }
+
+  .clear-all-btn {
+    width: 100%;
+    padding: 12px 20px;
+    margin-top: 12px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover {
+      background: var(--accent);
+      color: white;
+      box-shadow: var(--shadow);
+    }
+  }
+
+  .savings {
+    font-size: 10px;
+    color: #10b981;
     margin: 4px 0 0 0;
+    font-weight: 500;
   }
 </style>
